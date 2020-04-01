@@ -22,6 +22,7 @@
  *    Achim Kraus (Bosch Software Innovations GmbH) - replace striped executor
  *                                                    with serial executor
  *    Achim Kraus (Bosch Software Innovations GmbH) - fix openjdk-11 covariant return types
+ *    Rikard Höglund (RISE SICS)                    - possibility to retrieve buffer length
  ******************************************************************************/
 package org.eclipse.californium.core.network.stack;
 
@@ -211,6 +212,15 @@ public abstract class BlockwiseStatus {
 	 */
 	public final synchronized int getBufferSize() {
 		return buf.capacity();
+	}
+
+	/**
+	 * Gets the current length of the content in the buffer.
+	 * 
+	 * @return The length in bytes.
+	 */
+	public final synchronized int getBufferLength() {
+		return buf.position();
 	}
 
 	/**

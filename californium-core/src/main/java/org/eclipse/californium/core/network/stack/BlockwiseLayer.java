@@ -59,6 +59,8 @@
  *    Achim Kraus (Bosch Software Innovations GmbH) - extract requestNextBlock from 
  *                                                    tcp_experimental_features branch
  *                                                    for easier merging in the future.
+ *    Rikard Höglund (RISE SICS)                    - functionality to allow other layers to retrieve
+                                                      info about ongoing blockwise transfers
  ******************************************************************************/
 package org.eclipse.californium.core.network.stack;
 
@@ -1338,5 +1340,74 @@ public class BlockwiseLayer extends AbstractLayer {
 
 	public boolean isEmpty() {
 		return block1Transfers.size() == 0 && block2Transfers.size() == 0;
+	}
+
+	/**
+	 * Get an instance of a blockwiseTransferInfo.
+	 * 
+	 * @return instance of blockwiseTransferInfo
+	 */
+	public BlockwiseTransferInfo getBlockwiseTransferInfo() {
+		return new BlockwiseTransferInfo();
+	}
+
+	/**
+	 * Class that allows for other layers to retrieve information related to
+	 * ongoing block-wise transfers.
+	 *
+	 */
+	public class BlockwiseTransferInfo {
+
+		/**
+		 * Gets the currently received body size for an ongoing blockwise block1
+		 * transfer. (The cumulative payload size of the requests received)
+		 * 
+		 * @param exchange the exchange used for the transfer
+		 * @param request a block request in the transfer
+		 * @return the received payload size for the transfer
+		 */
+		public int getReceivedBodySize(final Exchange exchange, final Request request) {
+
+			KeyUri key = getKey(exchange, request);
+			if (key == null) {
+				return -1;
+			}
+
+			Block1BlockwiseStatus status;
+			synchronized (block1Transfers) {
+				status = block1Transfers.get(key);
+			}
+			if (status == null) {
+				return -1;
+			}
+
+			return status.getBufferLength();
+		}
+
+		/**
+		 * Gets the currently received body size for an ongoing blockwise block2
+		 * transfer. (The cumulative payload size of the responses received)
+		 * 
+		 * @param exchange the exchange used for the transfer
+		 * @param response a block response in the transfer
+		 * @return the received payload size for the transfer
+		 */
+		public int getReceivedBodySize(final Exchange exchange, final Response response) {
+
+			KeyUri key = getKey(exchange, response);
+			if (key == null) {
+				return -1;
+			}
+
+			Block2BlockwiseStatus status;
+			synchronized (block2Transfers) {
+				status = block2Transfers.get(key);
+			}
+			if (status == null) {
+				return -1;
+			}
+
+			return status.getBufferLength();
+		}
 	}
 }

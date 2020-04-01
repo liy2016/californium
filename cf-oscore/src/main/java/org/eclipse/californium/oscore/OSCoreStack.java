@@ -14,7 +14,7 @@
  *    Joakim Brorsson
  *    Ludwig Seitz (RISE SICS)
  *    Tobias Andersson (RISE SICS)
- *    
+ *    Rikard Höglund (RISE SICS)
  ******************************************************************************/
 package org.eclipse.californium.oscore;
 
@@ -24,6 +24,7 @@ import org.eclipse.californium.core.network.Outbox;
 import org.eclipse.californium.core.network.config.NetworkConfig;
 import org.eclipse.californium.core.network.stack.BaseCoapStack;
 import org.eclipse.californium.core.network.stack.BlockwiseLayer;
+import org.eclipse.californium.core.network.stack.BlockwiseLayer.BlockwiseTransferInfo;
 import org.eclipse.californium.core.network.stack.CongestionControlLayer;
 import org.eclipse.californium.core.network.stack.ExchangeCleanupLayer;
 import org.eclipse.californium.core.network.stack.Layer;
@@ -59,9 +60,13 @@ public class OSCoreStack extends BaseCoapStack {
 			reliabilityLayer = new ReliabilityLayer(config);
 		}
 
+		// Expose information on block-wise transfers to the ObjectSecurityLayer
+		BlockwiseLayer blockwiseLayer = new BlockwiseLayer(config);
+		BlockwiseTransferInfo blockwiseTransferInfo = blockwiseLayer.getBlockwiseTransferInfo();
+
 		Layer layers[] = new Layer[] { new ObjectSecurityContextLayer(ctxDb), new ExchangeCleanupLayer(config),
-				new ObserveLayer(config), new BlockwiseLayer(config), reliabilityLayer,
-				new ObjectSecurityLayer(ctxDb), };
+				new ObserveLayer(config), blockwiseLayer, reliabilityLayer,
+				new ObjectSecurityLayer(ctxDb, blockwiseTransferInfo) };
 		setLayers(layers);
 	}
 }

@@ -21,6 +21,8 @@ package org.eclipse.californium.oscore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
+
 import org.eclipse.californium.core.coap.EmptyMessage;
 import org.eclipse.californium.core.coap.Message;
 import org.eclipse.californium.core.coap.MessageObserverAdapter;
@@ -29,8 +31,10 @@ import org.eclipse.californium.core.coap.OptionSet;
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.coap.Response;
 import org.eclipse.californium.core.coap.Token;
+import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.network.Exchange;
 import org.eclipse.californium.core.network.stack.AbstractLayer;
+import org.eclipse.californium.core.network.stack.BlockwiseLayer.BlockwiseTransferInfo;
 import org.eclipse.californium.elements.util.Bytes;
 import org.eclipse.californium.oscore.ContextRederivation.PHASE;
 
@@ -47,12 +51,14 @@ public class ObjectSecurityLayer extends AbstractLayer {
 	private static final Logger LOGGER = LoggerFactory.getLogger(ObjectSecurityLayer.class);
 
 	private final OSCoreCtxDB ctxDb;
+	private final BlockwiseTransferInfo blockwiseTransferInfo;
 
-	public ObjectSecurityLayer(OSCoreCtxDB ctxDb) {
+	public ObjectSecurityLayer(OSCoreCtxDB ctxDb, BlockwiseTransferInfo blockwiseTransferInfo) {
 		if (ctxDb == null) {
 			throw new NullPointerException("OSCoreCtxDB must be provided!");
 		}
 		this.ctxDb = ctxDb;
+		this.blockwiseTransferInfo = blockwiseTransferInfo;
 	}
 
 	/**
@@ -130,7 +136,6 @@ public class ObjectSecurityLayer extends AbstractLayer {
 				}
 
 				String uri = request.getURI();
-
 				if (uri == null) {
 					LOGGER.error(ErrorDescriptions.URI_NULL);
 					throw new OSException(ErrorDescriptions.URI_NULL);
@@ -159,6 +164,10 @@ public class ObjectSecurityLayer extends AbstractLayer {
 
 				final Request preparedRequest = prepareSend(ctxDb, request);
 				final OSCoreCtx finalCtx = ctxDb.getContext(uri);
+
+				if (outgoingExceedsMaxUnfragSize(preparedRequest, outerBlockwise, ctx.getMaxUnfragmentedSize())) {
+					throw new IllegalStateException("outgoing request is exceeding the MAX_UNFRAGMENTED_SIZE!");
+				}
 
 				preparedRequest.addMessageObserver(0, new MessageObserverAdapter() {
 
@@ -215,8 +224,16 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			try {
 				OSCoreCtx ctx = ctxDb.getContext(exchange.getCryptographicContextID());
 				addPartialIV = ctx.getResponsesIncludePartialIV() || exchange.getRequest().getOptions().hasObserve();
-				
-				response = prepareSend(ctxDb, response, ctx, addPartialIV, outerBlockwise);
+
+				Response preparedResponse = prepareSend(ctxDb, response, ctx, addPartialIV, outerBlockwise);
+
+				if (outgoingExceedsMaxUnfragSize(preparedResponse, outerBlockwise, ctx.getMaxUnfragmentedSize())) {
+					super.sendResponse(exchange,
+							Response.createResponse(exchange.getCurrentRequest(), ResponseCode.INTERNAL_SERVER_ERROR));
+					throw new IllegalStateException("outgoing response is exceeding the MAX_UNFRAGMENTED_SIZE!");
+				}
+
+				response = preparedResponse;
 				exchange.setResponse(response);
 			} catch (OSException e) {
 				LOGGER.error("Error sending response: " + e.getMessage());
@@ -238,6 +255,14 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			// For OSCORE-protected requests with the outer block1-option let
 			// them pass through to be re-assembled by the block-wise layer
 			if (request.getOptions().hasBlock1()) {
+
+				if (incomingExceedsMaxUnfragSize(request, exchange, ctxDb)) {
+					LOGGER.error(
+							"incoming outer block-wise request's cumulative size is exceeding the MAX_UNFRAGMENTED_SIZE!");
+					exchange.sendResponse(Response.createResponse(request, ResponseCode.REQUEST_ENTITY_TOO_LARGE));
+					return;
+				}
+
 				super.receiveRequest(exchange, request);
 				return;
 			}
@@ -270,6 +295,7 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			LOGGER.error("No request tied to this response");
 			return;
 		}
+
 		try {
 			//Printing of status information.
 			//Warns when expecting OSCORE response but unprotected response is received
@@ -282,6 +308,13 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			// For OSCORE-protected response with the outer block2-option let
 			// them pass through to be re-assembled by the block-wise layer
 			if (response.getOptions().hasBlock2()) {
+
+				if (incomingExceedsMaxUnfragSize(response, exchange, ctxDb)) {
+					LOGGER.error(
+							"incoming outer block-wise response's cumulative size is exceeding the MAX_UNFRAGMENTED_SIZE!");
+					return;
+				}
+
 				super.receiveResponse(exchange, response);
 				return;
 			}
@@ -349,4 +382,105 @@ public class ObjectSecurityLayer extends AbstractLayer {
 	private static boolean isProtected(Message message) {
 		return message.getOptions().getOscore() != null;
 	}
+
+	/**
+	 * Check if a message being sent exceeds the MAX_UNFRAGMENTED_SIZE and is
+	 * not using inner block-wise. If so it should not be sent.
+	 * 
+	 * @param message the CoAP message
+	 * @param maxUnfragmentedSize the MAX_UNFRAGMENTED_SIZE value
+	 * 
+	 * @return if the message exceeds the MAX_UNFRAGMENTED_SIZE
+	 */
+	private boolean outgoingExceedsMaxUnfragSize(Message message, boolean outerBlockwise,
+			int maxUnfragmentedSize) {
+
+		boolean usesInnerBlockwise = (message.getOptions().hasBlock1() == true
+				|| message.getOptions().hasBlock2() == true) && outerBlockwise == false;
+
+		if (message.getPayloadSize() > maxUnfragmentedSize && usesInnerBlockwise == false) {
+			return true;
+		} else {
+			return false;
+		}
+
+	}
+
+	/**
+	 * Check if the cumulative payload size for an incoming block-wise transfer
+	 * exceeds the MAX_UNFRAGMENTED_SIZE and is not using inner block-wise. If
+	 * so reception should be aborted. This method is only called when using
+	 * outer block-wise so no need to check that explicitly.
+	 * 
+	 * @param message the CoAP message
+	 * @param exchange the exchange
+	 * @param ctxDb the context database used
+	 * 
+	 * @return if the cumulative payload exceeds the MAX_UNFRAGMENTED_SIZE
+	 */
+	private boolean incomingExceedsMaxUnfragSize(Message message, Exchange exchange, OSCoreCtxDB ctxDb) {
+
+		int cumulativeSize;
+		OSCoreCtx ctx = null;
+		if (message instanceof Request) {
+			ctx = ctxDb.getContext(getRid(message.getOptions().getOscore()));
+			cumulativeSize = blockwiseTransferInfo.getReceivedBodySize(exchange, (Request) message);
+			cumulativeSize += message.getPayloadSize(); // Count current payload
+		} else {
+			ctx = ctxDb.getContextByToken(message.getToken());
+			cumulativeSize = blockwiseTransferInfo.getReceivedBodySize(exchange, (Response) message);
+			cumulativeSize += message.getPayloadSize(); // Count current payload
+		}
+
+		// Do not consider it exceeded if no context is found, it will be
+		// handled elsewhere
+		if (ctx == null) {
+			return false;
+		}
+
+		if (cumulativeSize > ctx.getMaxUnfragmentedSize()) {
+			return true;
+		} else {
+			return false;
+		}
+
+	}
+
+	/**
+	 * Retrieve RID value from an OSCORE option.
+	 * 
+	 * @param oscoreOption the OSCORE option
+	 * @return the RID value
+	 */
+	private byte[] getRid(byte[] oscoreOption) {
+		if (oscoreOption.length == 0) {
+			oscoreOption = new byte[] { 0x00 };
+		}
+
+		// Parse the flag byte
+		byte flagByte = oscoreOption[0];
+		int n = flagByte & 0x07;
+		int k = flagByte & 0x08;
+		int h = flagByte & 0x10;
+
+		byte[] kid = null;
+		int index = 1;
+
+		// Partial IV
+		index += n;
+
+		// KID Context
+		if (h != 0) {
+			int s = oscoreOption[index];
+			index += s + 1;
+		}
+
+		// KID
+		if (k != 0) {
+			kid = Arrays.copyOfRange(oscoreOption, index, oscoreOption.length);
+		}
+
+		return kid;
+	}
+
 }
