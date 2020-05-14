@@ -72,6 +72,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.californium.core.coap.BlockOption;
 import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.coap.CoAP.Type;
+import org.eclipse.californium.core.coap.Message;
 import org.eclipse.californium.core.coap.MessageObserver;
 import org.eclipse.californium.core.coap.MessageObserverAdapter;
 import org.eclipse.californium.core.coap.OptionSet;
@@ -410,10 +411,10 @@ public class BlockwiseLayer extends AbstractLayer {
 	private void handleInboundBlockwiseUpload(final Exchange exchange, final Request request) {
 
 		if (requestExceedsMaxBodySize(request)) {
-
+			int maxBodySize = getMaxBodySize(request);
 			Response error = Response.createResponse(request, ResponseCode.REQUEST_ENTITY_TOO_LARGE);
-			error.setPayload(String.format("body too large, can process %d bytes max", maxResourceBodySize));
-			error.getOptions().setSize1(maxResourceBodySize);
+			error.setPayload(String.format("body too large, can process %d bytes max", getMaxBodySize(request)));
+			error.getOptions().setSize1(maxBodySize);
 			exchange.setCurrentResponse(error);
 			lower().sendResponse(exchange, error);
 
@@ -664,7 +665,10 @@ public class BlockwiseLayer extends AbstractLayer {
 				}
 				return;
 			}
-
+			
+			if (response.getMaxPayloadSize() == 0) {
+				response.setMaxPayloadSize(exchange.getRequest().getMaxPayloadSize());
+			}
 			KeyUri key = getKey(exchange, response);
 			Block2BlockwiseStatus status = getBlock2Status(key);
 			if (discardBlock2(key, status, exchange, response)) {
@@ -887,7 +891,7 @@ public class BlockwiseLayer extends AbstractLayer {
 
 		} else if (responseExceedsMaxBodySize(response)) {
 
-			LOGGER.debug("requested resource body exceeds max buffer size [{}], aborting request", maxResourceBodySize);
+			LOGGER.debug("requested resource body exceeds max buffer size [{}], aborting request", getMaxBodySize(response));
 			exchange.getRequest().cancel();
 
 		} else {
@@ -1062,10 +1066,11 @@ public class BlockwiseLayer extends AbstractLayer {
 
 	private Block1BlockwiseStatus getInboundBlock1Status(final KeyUri key, final Exchange exchange, final Request request) {
 		Block1BlockwiseStatus status;
+		int maxPayloadSize = getMaxBodySize(request);
 		synchronized (block1Transfers) {
 			status = block1Transfers.get(key);
 			if (status == null) {
-				status = Block1BlockwiseStatus.forInboundRequest(exchange, request, maxResourceBodySize);
+				status = Block1BlockwiseStatus.forInboundRequest(exchange, request, maxPayloadSize);
 				block1Transfers.put(key, status);
 				enableStatus = true;
 				LOGGER.debug("created tracker for inbound block1 transfer {}, transfers in progress: {}", status,
@@ -1112,11 +1117,11 @@ public class BlockwiseLayer extends AbstractLayer {
 	}
 
 	private Block2BlockwiseStatus getInboundBlock2Status(final KeyUri key, final Exchange exchange, final Response response) {
-
+		int maxPayloadSize = getMaxBodySize(response);
 		synchronized (block2Transfers) {
 			Block2BlockwiseStatus status = block2Transfers.get(key);
 			if (status == null) {
-				status = Block2BlockwiseStatus.forInboundResponse(exchange, response, maxResourceBodySize);
+				status = Block2BlockwiseStatus.forInboundResponse(exchange, response, maxPayloadSize);
 				block2Transfers.put(key, status);
 				enableStatus = true;
 				LOGGER.debug("created tracker for {} inbound block2 transfer {}, transfers in progress: {}, {}", key,
@@ -1227,11 +1232,19 @@ public class BlockwiseLayer extends AbstractLayer {
 	}
 
 	private boolean responseExceedsMaxBodySize(final Response response) {
-		return response.getOptions().hasSize2() && response.getOptions().getSize2() > maxResourceBodySize;
+		return response.getOptions().hasSize2() && response.getOptions().getSize2() > getMaxBodySize(response);
 	}
 
 	private boolean requestExceedsMaxBodySize(final Request request) {
-		return request.getOptions().hasSize1() && request.getOptions().getSize1() > maxResourceBodySize;
+		return request.getOptions().hasSize1() && request.getOptions().getSize1() > getMaxBodySize(request);
+	}
+
+	private int getMaxBodySize(final Message message) {
+		int maxPayloadSize = message.getMaxPayloadSize();
+		if (maxPayloadSize == 0) {
+			maxPayloadSize = maxResourceBodySize; 
+		}
+		return maxPayloadSize;
 	}
 
 	/**

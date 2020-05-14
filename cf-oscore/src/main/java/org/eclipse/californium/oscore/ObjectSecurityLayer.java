@@ -58,7 +58,7 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			throw new NullPointerException("OSCoreCtxDB must be provided!");
 		}
 		this.ctxDb = ctxDb;
-		this.blockwiseTransferInfo = blockwiseTransferInfo;
+		this.blockwiseTransferInfo = null; // blockwiseTransferInfo;
 	}
 
 	/**
@@ -255,7 +255,10 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			// For OSCORE-protected requests with the outer block1-option let
 			// them pass through to be re-assembled by the block-wise layer
 			if (request.getOptions().hasBlock1()) {
-
+				if (request.getMaxPayloadSize() == 0) {
+					int maxPayloadSize = incomingMaxUnfragSize(request, ctxDb);
+					request.setMaxPayloadSize(maxPayloadSize);
+				}
 				if (incomingExceedsMaxUnfragSize(request, exchange, ctxDb)) {
 					LOGGER.error(
 							"incoming outer block-wise request's cumulative size is exceeding the MAX_UNFRAGMENTED_SIZE!");
@@ -308,6 +311,13 @@ public class ObjectSecurityLayer extends AbstractLayer {
 			// For OSCORE-protected response with the outer block2-option let
 			// them pass through to be re-assembled by the block-wise layer
 			if (response.getOptions().hasBlock2()) {
+				if (response.getMaxPayloadSize() == 0) {
+					int maxPayloadSize = request.getMaxPayloadSize();
+					if (maxPayloadSize == 0) {
+						maxPayloadSize = incomingMaxUnfragSize(response, ctxDb);
+					}
+					response.setMaxPayloadSize(maxPayloadSize);
+				}
 
 				if (incomingExceedsMaxUnfragSize(response, exchange, ctxDb)) {
 					LOGGER.error(
@@ -420,30 +430,31 @@ public class ObjectSecurityLayer extends AbstractLayer {
 	 */
 	private boolean incomingExceedsMaxUnfragSize(Message message, Exchange exchange, OSCoreCtxDB ctxDb) {
 
-		int cumulativeSize;
+		int maxUnfragSize = incomingMaxUnfragSize(message, ctxDb);
+		if (maxUnfragSize > 0 && blockwiseTransferInfo != null) {
+			int cumulativeSize = message.getPayloadSize();
+			if (message instanceof Request) {
+				cumulativeSize += blockwiseTransferInfo.getReceivedBodySize(exchange, (Request) message);
+			} else {
+				cumulativeSize += blockwiseTransferInfo.getReceivedBodySize(exchange, (Response) message);
+			}
+			if (cumulativeSize > maxUnfragSize) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private int incomingMaxUnfragSize(Message message, OSCoreCtxDB ctxDb) {
+
 		OSCoreCtx ctx = null;
 		if (message instanceof Request) {
 			ctx = ctxDb.getContext(getRid(message.getOptions().getOscore()));
-			cumulativeSize = blockwiseTransferInfo.getReceivedBodySize(exchange, (Request) message);
-			cumulativeSize += message.getPayloadSize(); // Count current payload
 		} else {
 			ctx = ctxDb.getContextByToken(message.getToken());
-			cumulativeSize = blockwiseTransferInfo.getReceivedBodySize(exchange, (Response) message);
-			cumulativeSize += message.getPayloadSize(); // Count current payload
 		}
 
-		// Do not consider it exceeded if no context is found, it will be
-		// handled elsewhere
-		if (ctx == null) {
-			return false;
-		}
-
-		if (cumulativeSize > ctx.getMaxUnfragmentedSize()) {
-			return true;
-		} else {
-			return false;
-		}
-
+		return ctx == null ? 0 : ctx.getMaxUnfragmentedSize();
 	}
 
 	/**

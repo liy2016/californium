@@ -144,6 +144,8 @@ public abstract class Message {
 	/** Marks this message to have payload even if this is not intended */
 	private boolean unintendedPayload;
 
+	private int maxPayloadSize;
+
 	/**
 	 * Message specific parameter. Overwrites then general ones from
 	 * {@link NetworkConfig}.
@@ -543,6 +545,14 @@ public abstract class Message {
 	public Message setOptions(OptionSet options) {
 		this.options = new OptionSet(options);
 		return this;
+	}
+
+	public int getMaxPayloadSize() {
+		return maxPayloadSize;
+	}
+
+	public void setMaxPayloadSize(int maxPayloadSize) {
+		this.maxPayloadSize = maxPayloadSize;
 	}
 
 	/**
