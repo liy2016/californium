@@ -1135,6 +1135,8 @@ public class Request extends Message {
 	 * Return the error which happened on response handling. 
 	 * 
 	 * @return a {@link Throwable} if an error happened or {@code null} is there was no error.
+	 * 
+	 * @since 2.3
 	 */
 	public Throwable getOnResponseError() {
 		return responseHandlingError;
@@ -1144,6 +1146,8 @@ public class Request extends Message {
 	 * Mark this request as failing to handle the response.
 	 * 
 	 * @param cause the cause of the failure.
+	 * 
+	 * @since 2.3
 	 */
 	public void setOnResponseError(Throwable cause) {
 		this.responseHandlingError = cause;
@@ -1153,8 +1157,7 @@ public class Request extends Message {
 					((MessageObserver2) handler).onResponseHandlingError(responseHandlingError);
 				}
 			}
-		}
-		if (responseHandlingError != null) {
+
 			synchronized (this) {
 				notifyAll();
 			}

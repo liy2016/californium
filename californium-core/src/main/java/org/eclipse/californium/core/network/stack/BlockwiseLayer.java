@@ -890,6 +890,8 @@ public class BlockwiseLayer extends AbstractLayer {
 					response.getOptions().getSize2(), maxResourceBodySize);
 			LOGGER.debug(msg);
 			exchange.getRequest().setOnResponseError(new IllegalStateException(msg));
+			// TODO we keep the cancel event for backward compatibility but this
+			// should be removed in 3.x
 			exchange.getRequest().cancel();
 
 		} else {
@@ -918,6 +920,8 @@ public class BlockwiseLayer extends AbstractLayer {
 					String msg = "cannot process payload of block2 response, aborting request";
 					LOGGER.debug(msg);
 					exchange.getRequest().setOnResponseError(new IllegalStateException(msg));
+					// TODO we keep the cancel event for backward compatibility
+					// but this should be removed in 3.x
 					exchange.getRequest().cancel();
 					return;
 
