@@ -240,7 +240,11 @@ public class Request extends Message {
 	/** Contextual information about this request */
 	private Map<String, String> userContext;
 
-	/** Indicates if handling the response caused an error. */
+	/**
+	 * Indicates if handling the response caused an error.
+	 * 
+	 * @since 2.3
+	 */
 	private volatile Throwable responseHandlingError;
 
 	/**
