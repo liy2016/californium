@@ -885,7 +885,11 @@ public class BlockwiseLayer extends AbstractLayer {
 
 		} else if (responseExceedsMaxBodySize(response)) {
 
-			LOGGER.debug("requested resource body exceeds max buffer size [{}], aborting request", maxResourceBodySize);
+			String msg = String.format(
+					"requested resource body [%d bytes] exceeds max buffer size [%d bytes], aborting request",
+					response.getOptions().getSize2(), maxResourceBodySize);
+			LOGGER.debug(msg);
+			exchange.getRequest().setOnResponseError(new IllegalStateException(msg));
 			exchange.getRequest().cancel();
 
 		} else {
@@ -911,7 +915,9 @@ public class BlockwiseLayer extends AbstractLayer {
 
 				} else if (!status.addBlock(response)) {
 
-					LOGGER.debug("cannot process payload of block2 response, aborting request");
+					String msg = "cannot process payload of block2 response, aborting request";
+					LOGGER.debug(msg);
+					exchange.getRequest().setOnResponseError(new IllegalStateException(msg));
 					exchange.getRequest().cancel();
 					return;
 
